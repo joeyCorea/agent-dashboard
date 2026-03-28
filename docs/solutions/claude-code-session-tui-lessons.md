@@ -214,6 +214,26 @@ def _extract_title(lines):
 
 ---
 
+### 7. Textual Widget Bindings Silently Override App Bindings
+
+**Problem:** Rebound `enter` at the app level (`BINDINGS`) to a new action, but the key still did nothing. No error, no warning.
+
+**Root cause:** `ListView` (and other interactive widgets) have their own built-in `enter` binding. Widget-level bindings are evaluated before app-level bindings. The widget consumed the keypress silently, and the app binding never fired.
+
+**Solution:** Add `priority=True` to the app-level binding:
+
+```python
+# ❌ Silently ignored — ListView's built-in handler fires first
+Binding("enter", "open_session", "Open"),
+
+# ✅ priority=True overrides the widget-level handler
+Binding("enter", "open_session", "Open", priority=True),
+```
+
+**Lesson:** If an app-level key binding appears to do nothing (no error, no response), a widget is almost certainly consuming it first. The fix is `priority=True`. Common widgets with built-in `enter` handling: `ListView`, `DataTable`, `Tree`, `Input`.
+
+---
+
 ## Architecture Patterns
 
 ### Clean Module Separation
@@ -286,6 +306,7 @@ for jsonl_file in projects_dir.glob("**/*.jsonl"):
 | Session opens frozen/unresponsive | Subprocess inherits TUI terminal state | Exit app fully before calling subprocess |
 | "AttributeError: 'list' has no attribute 'split'" | Assumed message content is always string | Use helper to extract text from structured content |
 | Parsing failures on real data | Assumed spec matched implementation | Always test on real session files early |
+| App-level key binding silently ignored | Focused widget has a built-in handler for that key | Add `priority=True` to the app `Binding` |
 | Widget `id=` parameter rejected | Didn't pass `**kwargs` to parent `__init__()` | Always use `def __init__(self, ..., **kwargs)` |
 
 ---

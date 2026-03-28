@@ -128,8 +128,8 @@ class PendingSessionsApp(App):
     BINDINGS = [
         Binding("j", "move_down", "Down", show=False),
         Binding("k", "move_up", "Up", show=False),
-        Binding("enter", "toggle_preview", "Preview", show=True),
-        Binding("space", "toggle_preview", "Preview", show=False),
+        Binding("enter", "open_session", "Open", show=False, priority=True),
+        Binding("space", "toggle_preview", "Preview", show=True),
         Binding("o", "open_session", "Open", show=True),
         Binding("d", "dismiss_current", "Dismiss", show=True),
         Binding("r", "refresh", "Refresh", show=True),
