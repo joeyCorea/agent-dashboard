@@ -69,7 +69,13 @@ they are hermetic and don't depend on real session data.
   session files. Millisecond precision (`2026-03-28T07:20:53.869Z`) is also
   present; replacing `Z` with `+00:00` handles both forms.
 
+## Future Improvements
+
+- [ ] Use file `mtime` as secondary fallback when no timestamp field is present in JSONL (currently falls back to `datetime.now()`, making old sessions without timestamps appear current)
+- [ ] Log a warning when the fallback is used, so it's visible in debugging
+- [ ] Consider timezone-aware handling throughout — `fromisoformat()` with `+00:00` returns a tz-aware datetime; `datetime.now()` is naive. Mixed-awareness comparisons will raise `TypeError`.
+
 ## Related Files
 
-- `src/parser.py` — fix in `parse_jsonl()` lines ~107–111
+- `src/parser.py` — fix in `parse_jsonl()` (search for `endswith("Z")`)
 - `tests/test_parser.py` — `TestTimestampParsing` class

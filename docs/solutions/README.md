@@ -23,10 +23,9 @@ Check here before investigating a bug — the root cause and fix may already be 
 | [clear-session-and-subagent-filtering.md](./clear-session-and-subagent-filtering.md) | Filtering `/clear` artifacts and subagent JSONL files from session list |
 | [dismissal-log-filename-mismatch.md](./dismissal-log-filename-mismatch.md) | Hook writes `session.log` (singular); code must use the same filename |
 | [enter-key-open-session.md](./enter-key-open-session.md) | `priority=True` required for app bindings to override widget-level handlers |
-| [timestamp-formatting.md](./timestamp-formatting.md) | *(Superseded investigation — see timestamp-z-suffix-parsing.md)* |
 
 ## Notes for agents
 
 - **Line numbers** in solution docs are approximate at time of writing — verify against current code before acting.
 - When fixing a new issue, add a row to this index and create a solution doc following the structure of existing files.
-- If your fix supersedes an existing doc on the same topic, update the old doc with a notice pointing to the new one.
+- If your fix covers the same topic as an existing doc, update that doc rather than creating a new one.
