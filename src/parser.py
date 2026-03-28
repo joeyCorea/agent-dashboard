@@ -37,8 +37,13 @@ def discover_sessions() -> list[Session]:
 
     sessions = []
 
-    # Find all .jsonl files recursively
+    # Find all .jsonl files, but only at the top level of each project directory.
+    # Nested files (e.g. {session}/subagents/{agent}.jsonl) are subagent logs,
+    # not user sessions, and must be excluded.
     for jsonl_file in projects_dir.glob("**/*.jsonl"):
+        relative = jsonl_file.relative_to(projects_dir)
+        if len(relative.parts) != 2:
+            continue
         try:
             session = parse_jsonl(jsonl_file)
             if session:
@@ -76,6 +81,12 @@ def parse_jsonl(filepath: Path) -> Optional[Session]:
     if not lines:
         return None
 
+    # Sessions spawned by /clear are artifacts, not pending conversations.
+    # They contain the /clear slash command in a user message and have no
+    # assistant reply — skip them so they don't pollute the TUI list.
+    if _is_clear_session(lines):
+        return None
+
     # Extract session ID (from any message, they all have the same session_id)
     session_id = None
     for msg in lines:
@@ -103,7 +114,12 @@ def parse_jsonl(filepath: Path) -> Optional[Session]:
     for msg in reversed(lines):
         if "timestamp" in msg:
             try:
-                last_timestamp = datetime.fromisoformat(msg["timestamp"])
+                ts_str = msg["timestamp"]
+                # Python < 3.11 doesn't support 'Z' as UTC in fromisoformat;
+                # replace it with the equivalent '+00:00' offset.
+                if isinstance(ts_str, str) and ts_str.endswith("Z"):
+                    ts_str = ts_str[:-1] + "+00:00"
+                last_timestamp = datetime.fromisoformat(ts_str)
                 break
             except (ValueError, TypeError):
                 pass
@@ -122,6 +138,28 @@ def parse_jsonl(filepath: Path) -> Optional[Session]:
         last_assistant_message=last_assistant_msg,
         full_message_history=lines,
     )
+
+
+def _is_clear_session(lines: list[dict]) -> bool:
+    """Return True if this file was spawned by a /clear command.
+
+    When a user types /clear in Claude Code, a new session file is created
+    containing a file-history-snapshot, the /clear slash command logged as a
+    user message, and a system result entry.  No assistant message is written.
+    These are not real pending sessions — they are housekeeping artifacts.
+
+    Detection: at least one user message whose content contains the /clear
+    command tag AND no assistant message anywhere in the file.
+    """
+    has_clear_command = False
+    has_assistant = False
+    for msg in lines:
+        content = msg.get("message", {}).get("content", "")
+        if isinstance(content, str) and "<command-name>/clear</command-name>" in content:
+            has_clear_command = True
+        if msg.get("message", {}).get("role") == "assistant":
+            has_assistant = True
+    return has_clear_command and not has_assistant
 
 
 def _extract_title(lines: list[dict]) -> str:
