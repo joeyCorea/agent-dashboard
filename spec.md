@@ -42,16 +42,26 @@ Simple text file, one `sessionId` per line. Sessions whose IDs appear here are h
 
 ### How Sessions Get Dismissed
 
-1. **From within a Claude Code session:** User types `/clear` → `endSession` hook fires → logs the `sessionId` + "cheerio" marker to `~/.claude/session.log`
-   - Hook configuration (in `.claude/settings.json`):
+1. **From within a Claude Code session:** User types `/clear` → `SessionEnd` hook fires → logs the `sessionId` to `~/.claude/session.log`
+   - Hook configuration (in `~/.claude/settings.json`):
      ```json
      {
        "hooks": {
-         "endSession": "~/.claude/hooks/dismiss-session.sh"
+         "SessionEnd": [
+           {
+             "matcher": "clear",
+             "hooks": [
+               {
+                 "type": "command",
+                 "command": "python -c \"import sys,json; print(json.load(sys.stdin)['session_id'])\" >> ~/.claude/session.log"
+               }
+             ]
+           }
+         ]
        }
      }
      ```
-   - Hook script appends: `{sessionId}` (one per line) to `~/.claude/session.log`
+   - The hook reads session context from stdin as JSON and appends the `session_id` value (one per line) to `~/.claude/session.log`
 
 2. **From the TUI:** User presses `d` on a session → TUI appends `sessionId` to `~/.claude/session.log`
 
@@ -81,7 +91,7 @@ Example:
 │    "That looks good. What should we handle next?"                    │
 │                                                                       │
 └───────────────────────────────────────────────────────────────────────┘
- [j/k] navigate  [Enter] preview  [o] open  [d] dismiss  [r] refresh  [q] quit
+ [j/k] navigate  [Space] preview  [Enter/o] open  [d] dismiss  [r] refresh  [q] quit
 ```
 
 ### Empty State
@@ -94,8 +104,8 @@ If no sessions are pending: `All caught up.`
 | Key | Action |
 |-----|--------|
 | `j` / `k` or `↑` / `↓` | Navigate list |
-| `Enter` / `Space` | Toggle inline preview pane |
-| `o` | Open session in Claude Code (`claude --resume {sessionId}`) |
+| `Enter` / `o` | Open session in Claude Code (`claude --resume {sessionId}`) |
+| `Space` | Toggle inline preview pane |
 | `d` | Dismiss session (append to `~/.claude/session.log`) |
 | `r` | Refresh / re-scan conversation files |
 | `q` / `Ctrl+C` | Quit |
@@ -104,7 +114,7 @@ If no sessions are pending: `All caught up.`
 
 ## Preview Pane
 
-Pressing `Enter` on a session opens a preview panel below the list showing recent messages (last ~5 exchanges). Display as a scrollable conversation thread (you/Claude alternating). No reply capability from TUI.
+Pressing `Space` on a session opens a preview panel below the list showing recent messages (last ~5 exchanges). Display as a scrollable conversation thread (you/Claude alternating). No reply capability from TUI.
 
 ```
 ┌─ Preview: c--tools-agent / Refactor auth module ──────────────────────┐
@@ -126,7 +136,7 @@ Pressing `Enter` on a session opens a preview panel below the list showing recen
 
 ## Opening a Session
 
-Pressing `o` (or selecting and pressing Enter with focus on a row) runs:
+Pressing `o` or `Enter` runs:
 
 ```bash
 claude --resume {sessionId}
@@ -134,7 +144,7 @@ claude --resume {sessionId}
 
 This opens the session in Claude Code, returning focus to the user. They can now:
 - Reply to Claude
-- Use `/clear` to dismiss when done (triggers the `endSession` hook)
+- Use `/clear` to dismiss when done (triggers the `SessionEnd` hook)
 - Work as normal
 
 ---
@@ -182,30 +192,27 @@ agent-dashboard/
 
 ## Hook Configuration
 
-Users will need to set up the `endSession` hook in `.claude/settings.json`:
+Users will need to add a `SessionEnd` hook to `~/.claude/settings.json`:
 
 ```json
 {
   "hooks": {
-    "endSession": "bash ~/.claude/hooks/dismiss-session.sh"
+    "SessionEnd": [
+      {
+        "matcher": "clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import sys,json; print(json.load(sys.stdin)['session_id'])\" >> ~/.claude/session.log"
+          }
+        ]
+      }
+    ]
   }
 }
 ```
 
-And create `~/.claude/hooks/dismiss-session.sh`:
-
-```bash
-#!/bin/bash
-# Appends the current session ID to the dismissal log
-# Claude Code passes sessionId via $CLAUDE_SESSION_ID environment variable
-if [ -n "$CLAUDE_SESSION_ID" ]; then
-  echo "$CLAUDE_SESSION_ID" >> ~/.claude/session.log
-  echo "Session $CLAUDE_SESSION_ID dismissed (cheerio)"
-else
-  echo "Error: CLAUDE_SESSION_ID not set" >&2
-  exit 1
-fi
-```
+Claude Code passes session context to the hook via stdin as a JSON object. The inline Python reads that JSON, extracts `session_id`, and appends it to `~/.claude/session.log`. The `matcher: "clear"` ensures the hook only fires when `/clear` is used.
 
 ---
 
@@ -223,13 +230,12 @@ fi
 
 ### 1. Hook Argument Passing
 
-**Decision:** Session ID passed via environment variable `$CLAUDE_SESSION_ID`
+**Decision:** Session ID passed via stdin as JSON — `{"session_id": "..."}` (and other fields)
 
 **Rationale:**
-- More reliable across shell contexts and languages
-- Clearer in hook configuration (no ambiguity about positional args)
-- Language-agnostic (works with any hook script)
-- Standard Unix convention for passing context to child processes
+- Claude Code's hook mechanism passes context to hook commands via stdin as a JSON object
+- The `session_id` field is extracted with an inline Python one-liner; no external script needed
+- The `matcher` field on the hook entry scopes the hook to `/clear` only, avoiding spurious writes
 
 ### 2. CLI Syntax for Resuming Sessions
 
