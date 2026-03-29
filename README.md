@@ -1,6 +1,10 @@
 # Claude Code Pending Sessions TUI
 
-A keyboard-driven terminal UI to track and manage Claude Code sessions awaiting your response.
+When working across multiple Claude Code sessions, it's easy to lose track of which ones are waiting for your response. 
+
+There's no ambient signal — you have to check each session manually.
+
+I created a keyboard-driven terminal UI to track and manage Claude Code sessions awaiting your response.
 
 ## Installation
 
