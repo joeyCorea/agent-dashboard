@@ -149,6 +149,23 @@ def _make_session(session_id: str, project_name: str, days_ago: int = 0) -> Sess
     )
 
 
+class TestDefaultGrouped:
+    """The app must start in grouped view by default."""
+
+    def test_default_grouped_is_true(self):
+        """_grouped must default to True so the app starts in grouped-by-project view."""
+        app = PendingSessionsApp()
+        # on_mount sets _grouped; simulate it by checking the intended default
+        # We verify the on_mount code path sets _grouped = True
+        assert hasattr(PendingSessionsApp, 'on_mount'), "App must have on_mount method"
+        import inspect
+        source = inspect.getsource(PendingSessionsApp.on_mount)
+        assert "_grouped = True" in source, (
+            "on_mount must set _grouped = True (grouped view as default). "
+            f"Found: {source}"
+        )
+
+
 class TestGroupBinding:
     """The 'g' key binding must exist and trigger the group toggle."""
 

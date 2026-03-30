@@ -305,7 +305,7 @@ class PendingSessionsApp(App):
     def on_mount(self):
         """Initialize the app on mount."""
         self._days_filter = DEFAULT_DAYS_FILTER
-        self._grouped = False
+        self._grouped = True
         self.title = "Claude Code Pending Sessions"
         self.sub_title = filter_subtitle(self._days_filter)
         self.refresh_sessions()
