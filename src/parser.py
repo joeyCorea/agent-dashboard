@@ -20,9 +20,30 @@ class Session:
     title: str
     last_message_timestamp: datetime
     last_assistant_message: str
-    full_message_history: list[dict]
+    filepath: Path
     status: str = "ready"  # "in progress" or "ready"
     project_dir: Optional[str] = None  # original cwd for --resume
+
+
+def load_message_history(filepath: Path) -> list[dict]:
+    """Load and return all parsed JSONL lines from a session file on demand.
+
+    Args:
+        filepath: Path to the .jsonl session file
+
+    Returns:
+        List of parsed message dicts, or empty list on error
+    """
+    lines = []
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    lines.append(json.loads(line))
+    except Exception:
+        return []
+    return lines
 
 
 def _build_session_cwd_map() -> dict[str, str]:
@@ -184,7 +205,7 @@ def parse_jsonl(filepath: Path) -> Optional[Session]:
         title=title,
         last_message_timestamp=last_timestamp,
         last_assistant_message=last_assistant_msg,
-        full_message_history=lines,
+        filepath=filepath,
         status=status,
         project_dir=project_dir,
     )

@@ -14,7 +14,9 @@ from textual.containers import Vertical
 from textual.widgets import Footer, Header, Input, ListItem, ListView, Static
 from textual.binding import Binding
 
-from src.parser import Session, discover_sessions, format_elapsed_time, _extract_text_from_content
+from textual import work
+
+from src.parser import Session, discover_sessions, format_elapsed_time, load_message_history, _extract_text_from_content
 from src.dismiss import read_dismissed_ids, dismiss_session
 
 DEFAULT_DAYS_FILTER = 7
@@ -201,8 +203,9 @@ class PreviewPane(Static):
 
         lines = ["Preview: {} / {}\n".format(self.session.project_name, self.session.title)]
 
-        # Show last ~5 message exchanges (max 10 messages)
-        messages = self.session.full_message_history[-10:]
+        # Load message history on demand (lazy loading)
+        full_history = load_message_history(self.session.filepath)
+        messages = full_history[-10:]
 
         for msg in messages:
             role = msg.get("message", {}).get("role", "unknown")
@@ -316,16 +319,24 @@ class PendingSessionsApp(App):
         self._grouped = True
         self.title = "Claude Code Pending Sessions"
         self.sub_title = filter_subtitle(self._days_filter)
-        self.refresh_sessions()
-        self.query_one("#session-list", SessionListView).focus()
+        self._load_sessions()
+
+    @work(thread=True)
+    def _load_sessions(self):
+        """Load sessions in a background thread for non-blocking startup."""
+        all_sessions = discover_sessions()
+        active_sessions = filter_sessions(all_sessions, self._days_filter)
+        self.call_from_thread(self._update_session_list, active_sessions)
+
+    def _update_session_list(self, sessions: list[Session]):
+        """Update the UI with loaded sessions (called on the main thread)."""
+        list_view = self.query_one("#session-list", SessionListView)
+        list_view.update_sessions(sessions, grouped=self._grouped)
+        list_view.focus()
 
     def refresh_sessions(self):
         """Refresh the session list from disk."""
-        all_sessions = discover_sessions()
-        active_sessions = filter_sessions(all_sessions, self._days_filter)
-
-        list_view = self.query_one("#session-list", SessionListView)
-        list_view.update_sessions(active_sessions, grouped=self._grouped)
+        self._load_sessions()
 
     def action_toggle_group(self):
         """Toggle between flat and grouped-by-project view."""

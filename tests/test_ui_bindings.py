@@ -144,7 +144,7 @@ def _make_session(session_id: str, project_name: str, days_ago: int = 0) -> Sess
         title=f"Session {session_id}",
         last_message_timestamp=ts,
         last_assistant_message="some response",
-        full_message_history=[],
+        filepath=Path("dummy.jsonl"),
         status="ready",
     )
 
