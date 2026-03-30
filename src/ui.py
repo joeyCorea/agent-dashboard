@@ -4,7 +4,7 @@ Textual TUI for pending Claude Code sessions.
 Main UI components and key binding handlers.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from textual.app import ComposeResult, App
 from textual.containers import Vertical
@@ -13,6 +13,21 @@ from textual.binding import Binding
 
 from src.parser import Session, discover_sessions, format_elapsed_time, _extract_text_from_content
 from src.dismiss import read_dismissed_ids, dismiss_session
+
+DEFAULT_DAYS_FILTER = 7
+
+
+def is_within_cutoff(session: Session, cutoff: datetime) -> bool:
+    """Check if a session's timestamp is at or after the cutoff.
+
+    Handles mixed timezone-aware and naive datetimes: if the session
+    timestamp is naive (fallback from unparseable timestamps), treat
+    it as UTC so the comparison doesn't raise TypeError.
+    """
+    ts = session.last_message_timestamp
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts >= cutoff
 
 
 class SessionListItem(ListItem):
@@ -192,10 +207,16 @@ class PendingSessionsApp(App):
         # Discover all sessions
         all_sessions = discover_sessions()
 
-        # Filter out dismissed sessions
+        # Layer 2: Filter out dismissed sessions
         dismissed_ids = read_dismissed_ids()
         active_sessions = [
             s for s in all_sessions if s.session_id not in dismissed_ids
+        ]
+
+        # Layer 3: Filter by date cutoff (default: last 7 days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=DEFAULT_DAYS_FILTER)
+        active_sessions = [
+            s for s in active_sessions if is_within_cutoff(s, cutoff)
         ]
 
         # Get the list view and update it

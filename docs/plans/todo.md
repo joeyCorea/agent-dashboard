@@ -3,7 +3,10 @@ Proposed list:
 1. Allow the user to toggle between flat list vs grouped by project
 1. Allow the user to toggle enter how many days they want to filter
 
-Revised list:
+Revised list (least risky first):
+1. Default to conversations where last message was sent in the last 7 days (plan 002) — simple datetime filter, no UI changes
+2. Allow the user to toggle enter how many days they want to filter (plan 004) — extends plan 002 with Input widget, medium focus-management risk
+3. Allow the user to toggle between flat list vs grouped by project (plan 003) — changes core display logic, index tracking with mixed item types
 
 For above items,
 1. use /ce:plan to write a plan to @docs/plans/

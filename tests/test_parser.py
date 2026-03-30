@@ -359,6 +359,134 @@ class TestBuildSessionCwdMap:
         assert "aaa-111" not in result
 
 
+def _write_real_session_at(session_id: str, project_dir: Path, timestamp: datetime) -> Path:
+    """Create a normal JSONL session file with a specific timestamp."""
+    ts_str = timestamp.strftime("%Y-%m-%dT%H:%M:%S")
+    if timestamp.tzinfo is not None:
+        ts_str += "Z"  # mimic Claude Code's UTC 'Z' suffix
+    jsonl_file = project_dir / f"{session_id}.jsonl"
+    with open(jsonl_file, "w") as f:
+        f.write(json.dumps({"sessionId": session_id, "timestamp": ts_str,
+                            "message": {"role": "user", "content": "help me"}}) + "\n")
+        f.write(json.dumps({"sessionId": session_id, "timestamp": ts_str,
+                            "message": {"role": "assistant", "content": "Sure thing."}}) + "\n")
+    return jsonl_file
+
+
+class TestSevenDayFilter:
+    """Sessions older than the default cutoff (7 days) should be excluded by the UI layer.
+
+    The date filter is layer 3 in the filtering architecture:
+      Layer 1: Content check (_is_clear_session) in parse_jsonl
+      Layer 2: ID dismissal in refresh_sessions
+      Layer 3: Date cutoff in refresh_sessions
+
+    This filter uses is_within_cutoff() which handles mixed tz-aware/naive datetimes.
+    """
+
+    def test_session_within_7_days_is_included(self, tmp_path, monkeypatch):
+        """A session from 6 days ago should pass the 7-day filter."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        proj_dir = tmp_path / ".claude" / "projects" / "my-project"
+        proj_dir.mkdir(parents=True)
+
+        six_days_ago = datetime.now(timezone.utc) - timedelta(days=6)
+        _write_real_session_at("recent-sess", proj_dir, six_days_ago)
+
+        from src.ui import is_within_cutoff
+        sessions = discover_sessions()
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        included = [s for s in sessions if is_within_cutoff(s, cutoff)]
+        assert any(s.session_id == "recent-sess" for s in included), (
+            "A 6-day-old session should be included within the 7-day filter."
+        )
+
+    def test_session_older_than_7_days_is_excluded(self, tmp_path, monkeypatch):
+        """A session from 8 days ago should be excluded by the 7-day filter."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        proj_dir = tmp_path / ".claude" / "projects" / "my-project"
+        proj_dir.mkdir(parents=True)
+
+        eight_days_ago = datetime.now(timezone.utc) - timedelta(days=8)
+        _write_real_session_at("old-sess", proj_dir, eight_days_ago)
+
+        from src.ui import is_within_cutoff
+        sessions = discover_sessions()
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        included = [s for s in sessions if is_within_cutoff(s, cutoff)]
+        assert not any(s.session_id == "old-sess" for s in included), (
+            "An 8-day-old session should be excluded by the 7-day filter."
+        )
+
+    def test_session_exactly_at_cutoff_is_included(self, tmp_path, monkeypatch):
+        """A session exactly 7 days old (to the second) should be included (>= comparison)."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        proj_dir = tmp_path / ".claude" / "projects" / "my-project"
+        proj_dir.mkdir(parents=True)
+
+        # Use a fixed reference point to avoid race between file write and cutoff calc.
+        # Add 1 second of slack since strftime truncates sub-second precision.
+        seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7, seconds=-1)
+        _write_real_session_at("edge-sess", proj_dir, seven_days_ago)
+
+        from src.ui import is_within_cutoff
+        sessions = discover_sessions()
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        included = [s for s in sessions if is_within_cutoff(s, cutoff)]
+        assert any(s.session_id == "edge-sess" for s in included), (
+            "A session at the 7-day boundary (with 1s slack) should be included (>= comparison)."
+        )
+
+    def test_naive_timestamp_fallback_is_included(self, tmp_path, monkeypatch):
+        """Sessions with naive datetime (parse fallback) should be treated as current, not excluded.
+
+        When parse_jsonl cannot parse a timestamp, it falls back to naive datetime.now().
+        The filter must handle comparing a tz-aware cutoff against a naive timestamp
+        without raising TypeError — and should include such sessions (they are likely current).
+        """
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        proj_dir = tmp_path / ".claude" / "projects" / "my-project"
+        proj_dir.mkdir(parents=True)
+
+        # Write a session with an unparseable timestamp to trigger the naive fallback
+        jsonl_file = proj_dir / "naive-sess.jsonl"
+        with open(jsonl_file, "w") as f:
+            f.write(json.dumps({"sessionId": "naive-sess", "timestamp": "not-a-date",
+                                "message": {"role": "user", "content": "hello"}}) + "\n")
+            f.write(json.dumps({"sessionId": "naive-sess", "timestamp": "not-a-date",
+                                "message": {"role": "assistant", "content": "hi"}}) + "\n")
+
+        from src.ui import is_within_cutoff
+        sessions = discover_sessions()
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        # This must not raise TypeError from mixed tz-aware/naive comparison
+        included = [s for s in sessions if is_within_cutoff(s, cutoff)]
+        assert any(s.session_id == "naive-sess" for s in included), (
+            "Sessions with naive timestamps (parse fallback) should be included, "
+            "not excluded or cause a TypeError."
+        )
+
+    def test_mixed_old_and_new_sessions_filtered_correctly(self, tmp_path, monkeypatch):
+        """With a mix of recent and old sessions, only recent ones survive the filter."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        proj_dir = tmp_path / ".claude" / "projects" / "my-project"
+        proj_dir.mkdir(parents=True)
+
+        recent = datetime.now(timezone.utc) - timedelta(days=1)
+        old = datetime.now(timezone.utc) - timedelta(days=14)
+        _write_real_session_at("new-sess", proj_dir, recent)
+        _write_real_session_at("ancient-sess", proj_dir, old)
+
+        from src.ui import is_within_cutoff
+        sessions = discover_sessions()
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        included = [s for s in sessions if is_within_cutoff(s, cutoff)]
+        ids = [s.session_id for s in included]
+        assert "new-sess" in ids, "1-day-old session should be included."
+        assert "ancient-sess" not in ids, "14-day-old session should be excluded."
+        assert len(included) == 1, f"Expected 1 session, got {len(included)}: {ids}"
+
+
 class TestDiscoverSessionsProjectDir:
     """discover_sessions() should populate project_dir from ~/.claude/sessions/*.json."""
 
