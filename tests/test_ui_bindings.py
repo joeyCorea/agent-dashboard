@@ -1,11 +1,11 @@
-"""Tests for UI key binding configuration and configurable filter."""
+"""Tests for UI key binding configuration, configurable filter, and grouped view."""
 
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from src.ui import PendingSessionsApp, is_within_cutoff, DEFAULT_DAYS_FILTER
-from src.parser import discover_sessions
+from src.parser import Session, discover_sessions
 
 
 class TestEnterKeyBinding:
@@ -133,4 +133,116 @@ class TestConfigurableDaysFilter:
         assert filter_subtitle(7) == "Last 7d"
         assert filter_subtitle(3) == "Last 3d"
         assert filter_subtitle(0) == "All sessions"
+
+
+def _make_session(session_id: str, project_name: str, days_ago: int = 0) -> Session:
+    """Create a Session object for grouping tests."""
+    ts = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    return Session(
+        session_id=session_id,
+        project_name=project_name,
+        title=f"Session {session_id}",
+        last_message_timestamp=ts,
+        last_assistant_message="some response",
+        full_message_history=[],
+        status="ready",
+    )
+
+
+class TestGroupBinding:
+    """The 'g' key binding must exist and trigger the group toggle."""
+
+    def _get_binding(self, key: str):
+        for binding in PendingSessionsApp.BINDINGS:
+            if binding.key == key:
+                return binding
+        return None
+
+    def test_g_binding_exists(self):
+        """The 'g' key must be bound to action_toggle_group."""
+        binding = self._get_binding("g")
+        assert binding is not None, "No 'g' binding found in PendingSessionsApp.BINDINGS."
+        assert binding.action == "toggle_group", (
+            f"Expected 'g' to trigger 'toggle_group', got '{binding.action}'."
+        )
+
+
+class TestGroupSessions:
+    """group_sessions() organizes sessions by project name with headers.
+
+    Returns a list of tuples: either ("header", project_name) for group headers
+    or ("session", Session) for session items. Groups are sorted by most recent
+    session in the group. Sessions within each group retain their existing order.
+    """
+
+    def test_single_project_produces_one_header(self):
+        """Sessions from one project produce one header followed by sessions."""
+        from src.ui import group_sessions
+        sessions = [
+            _make_session("s1", "my-project", days_ago=1),
+            _make_session("s2", "my-project", days_ago=2),
+        ]
+        result = group_sessions(sessions)
+        headers = [item for item in result if item[0] == "header"]
+        assert len(headers) == 1, f"Expected 1 header, got {len(headers)}: {headers}"
+        assert headers[0][1] == "my-project"
+
+    def test_multiple_projects_sorted_by_most_recent(self):
+        """Groups are sorted by the most recent session in each group."""
+        from src.ui import group_sessions
+        sessions = [
+            _make_session("s1", "project-a", days_ago=3),  # oldest
+            _make_session("s2", "project-b", days_ago=1),  # most recent
+        ]
+        result = group_sessions(sessions)
+        headers = [item[1] for item in result if item[0] == "header"]
+        assert headers == ["project-b", "project-a"], (
+            f"Expected groups sorted by recency: ['project-b', 'project-a'], got {headers}"
+        )
+
+    def test_sessions_within_group_preserve_order(self):
+        """Sessions within a group retain the order they were passed in."""
+        from src.ui import group_sessions
+        sessions = [
+            _make_session("newer", "proj", days_ago=1),
+            _make_session("older", "proj", days_ago=3),
+        ]
+        result = group_sessions(sessions)
+        session_items = [item[1] for item in result if item[0] == "session"]
+        ids = [s.session_id for s in session_items]
+        assert ids == ["newer", "older"], (
+            f"Sessions within group should preserve input order, got {ids}"
+        )
+
+    def test_empty_sessions_returns_empty(self):
+        """Grouping an empty list returns an empty list."""
+        from src.ui import group_sessions
+        assert group_sessions([]) == []
+
+    def test_interleaved_projects_grouped_correctly(self):
+        """Sessions from different projects interleaved in the input are grouped together."""
+        from src.ui import group_sessions
+        sessions = [
+            _make_session("a1", "alpha", days_ago=0),
+            _make_session("b1", "beta", days_ago=1),
+            _make_session("a2", "alpha", days_ago=2),
+        ]
+        result = group_sessions(sessions)
+        # alpha group: a1, a2 (most recent = 0 days ago → first group)
+        # beta group: b1 (most recent = 1 day ago → second group)
+        headers = [item[1] for item in result if item[0] == "header"]
+        assert headers == ["alpha", "beta"], f"Expected ['alpha', 'beta'], got {headers}"
+
+        alpha_sessions = []
+        in_alpha = False
+        for tag, val in result:
+            if tag == "header" and val == "alpha":
+                in_alpha = True
+            elif tag == "header":
+                in_alpha = False
+            elif tag == "session" and in_alpha:
+                alpha_sessions.append(val.session_id)
+        assert alpha_sessions == ["a1", "a2"], (
+            f"Alpha group should contain a1, a2 in order, got {alpha_sessions}"
+        )
 

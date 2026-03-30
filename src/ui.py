@@ -4,9 +4,10 @@ Textual TUI for pending Claude Code sessions.
 Main UI components and key binding handlers.
 """
 
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from typing import Optional
+from typing import Any, Optional
 
 from textual.app import ComposeResult, App
 from textual.containers import Vertical
@@ -48,6 +49,37 @@ def filter_sessions(sessions: list[Session], days_filter: int = DEFAULT_DAYS_FIL
         cutoff = datetime.now(timezone.utc) - timedelta(days=days_filter)
         result = [s for s in result if is_within_cutoff(s, cutoff)]
 
+    return result
+
+
+def group_sessions(sessions: list[Session]) -> list[tuple[str, Any]]:
+    """Group sessions by project name with headers.
+
+    Returns a list of tagged tuples:
+      ("header", project_name) — group header
+      ("session", Session)     — session item
+
+    Groups sorted by most recent session in each group.
+    Sessions within each group preserve their input order.
+    """
+    if not sessions:
+        return []
+
+    groups = defaultdict(list)
+    for s in sessions:
+        groups[s.project_name].append(s)
+
+    sorted_groups = sorted(
+        groups.items(),
+        key=lambda g: g[1][0].last_message_timestamp,
+        reverse=True,
+    )
+
+    result = []
+    for project_name, project_sessions in sorted_groups:
+        result.append(("header", project_name))
+        for s in project_sessions:
+            result.append(("session", s))
     return result
 
 
@@ -102,22 +134,42 @@ class SessionListView(ListView):
         super().__init__(**kwargs)
         self.sessions = sessions or []
 
-    def update_sessions(self, sessions: list[Session]):
+    def update_sessions(self, sessions: list[Session], grouped: bool = False):
         """Update the list with new sessions."""
         self.sessions = sessions
         self.clear()
 
         if not sessions:
-            # Show empty state
             self.append(ListItem(Static("All caught up.")))
-        else:
+            return
+
+        if not grouped:
             for session in sessions:
                 self.append(SessionListItem(session))
+            return
+
+        for tag, value in group_sessions(sessions):
+            if tag == "header":
+                header = ListItem(Static(f"  --- {value} ---"))
+                header.add_class("group-header")
+                self.append(header)
+            else:
+                self.append(SessionListItem(value))
 
     def get_selected_session(self) -> Session | None:
-        """Get the currently selected session."""
-        if self.index is not None and 0 <= self.index < len(self.sessions):
-            return self.sessions[self.index]
+        """Get the currently selected session.
+
+        Walks the widget children to find the selected item. This handles
+        both flat and grouped views — in grouped view, header ListItems
+        are not SessionListItems and are skipped.
+        """
+        if self.index is None:
+            return None
+        children = list(self.children)
+        if 0 <= self.index < len(children):
+            child = children[self.index]
+            if isinstance(child, SessionListItem):
+                return child.session
         return None
 
 
@@ -185,6 +237,7 @@ class PendingSessionsApp(App):
         Binding("o", "open_session", "Open", show=True),
         Binding("d", "dismiss_current", "Dismiss", show=True),
         Binding("f", "open_filter", "Filter", show=True),
+        Binding("g", "toggle_group", "Group", show=True),
         Binding("r", "refresh", "Refresh", show=True),
         Binding("q", "quit", "Quit", show=True),
     ]
@@ -212,6 +265,11 @@ class PendingSessionsApp(App):
 
     SessionListItem.status-ready {
         color: $success;
+    }
+
+    .group-header {
+        color: $accent;
+        text-style: bold;
     }
 
     #preview-pane {
@@ -247,6 +305,7 @@ class PendingSessionsApp(App):
     def on_mount(self):
         """Initialize the app on mount."""
         self._days_filter = DEFAULT_DAYS_FILTER
+        self._grouped = False
         self.title = "Claude Code Pending Sessions"
         self.sub_title = filter_subtitle(self._days_filter)
         self.refresh_sessions()
@@ -257,7 +316,12 @@ class PendingSessionsApp(App):
         active_sessions = filter_sessions(all_sessions, self._days_filter)
 
         list_view = self.query_one("#session-list", SessionListView)
-        list_view.update_sessions(active_sessions)
+        list_view.update_sessions(active_sessions, grouped=self._grouped)
+
+    def action_toggle_group(self):
+        """Toggle between flat and grouped-by-project view."""
+        self._grouped = not self._grouped
+        self.refresh_sessions()
 
     def action_open_filter(self):
         """Show the filter input widget."""
