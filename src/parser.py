@@ -190,7 +190,13 @@ def parse_jsonl(filepath: Path) -> Optional[Session]:
                 if not project_dir and "cwd" in msg:
                     project_dir = msg["cwd"]
 
-                # ai-title (first one wins)
+                # custom-title from /rename always wins
+                if msg.get("type") == "custom-title":
+                    raw_custom = msg.get("customTitle", "").strip()
+                    if raw_custom:
+                        title = _truncate(raw_custom, 40)
+
+                # ai-title (first one wins, unless custom-title overrides)
                 if not title and msg.get("type") == "ai-title":
                     raw_title = msg.get("message", {}).get("content", "").strip()
                     if raw_title:
