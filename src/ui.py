@@ -15,6 +15,7 @@ from textual.widgets import Footer, Header, Input, ListItem, ListView, Static
 from textual.binding import Binding
 
 from textual import work
+from rich.markup import escape
 
 from src.parser import Session, discover_sessions, format_elapsed_time, load_message_history, _extract_text_from_content
 from src.dismiss import read_dismissed_ids, dismiss_session
@@ -115,11 +116,15 @@ class SessionListItem(ListItem):
         elapsed = format_elapsed_time(self.session.last_message_timestamp)
         status = self.session.status
 
+        # Escape dynamic text to prevent Rich markup interpretation
+        # (session content may contain brackets like [/code] that Rich treats as tags)
+        title = escape(self.session.title)
+
         # Build the main line — omit project name when grouped (header already shows it)
         if self.grouped:
-            main_line = f"  [{self.session.title:40}] {status:>11} {elapsed:>10}"
+            main_line = f"  {title:40}  {status:>11} {elapsed:>10}"
         else:
-            main_line = f"  {self.session.project_name:15} [{self.session.title:40}] {status:>11} {elapsed:>10}"
+            main_line = f"  {escape(self.session.project_name):15} {title:40}  {status:>11} {elapsed:>10}"
 
         # Build the preview line
         preview = self.session.last_assistant_message
@@ -130,7 +135,7 @@ class SessionListItem(ListItem):
         if len(preview) > 70:
             preview = preview[:67] + "..."
 
-        return f"{main_line}\n    \"{preview}\""
+        return f"{main_line}\n    \"{escape(preview)}\""
 
 
 class SessionListView(ListView):
@@ -201,7 +206,8 @@ class PreviewPane(Static):
         if not self.session:
             return ""
 
-        lines = ["Preview: {} / {}\n".format(self.session.project_name, self.session.title)]
+        lines = ["Preview: {} / {}\n".format(
+            escape(self.session.project_name), escape(self.session.title))]
 
         # Load message history on demand (lazy loading)
         full_history = load_message_history(self.session.filepath)
@@ -224,6 +230,7 @@ class PreviewPane(Static):
             if len(first_line) > 70:
                 first_line = first_line[:67] + "..."
 
+            first_line = escape(first_line)
             if role == "user":
                 lines.append("You:    {}".format(first_line))
             elif role == "assistant":
