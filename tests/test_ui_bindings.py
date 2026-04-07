@@ -264,6 +264,87 @@ class TestGroupSessions:
         )
 
 
+class TestSearchBinding:
+    """The '/' key binding must exist and trigger the search action."""
+
+    def _get_binding(self, key: str):
+        for binding in PendingSessionsApp.BINDINGS:
+            if binding.key == key:
+                return binding
+        return None
+
+    def test_slash_binding_exists(self):
+        """The '/' key must be bound to action_open_search."""
+        binding = self._get_binding("slash")
+        assert binding is not None, "No 'slash' binding found in PendingSessionsApp.BINDINGS."
+        assert binding.action == "open_search", (
+            f"Expected 'slash' to trigger 'open_search', got '{binding.action}'."
+        )
+
+    def test_escape_binding_exists(self):
+        """The 'escape' key must be bound to action_close_search."""
+        binding = self._get_binding("escape")
+        assert binding is not None, "No 'escape' binding found in PendingSessionsApp.BINDINGS."
+        assert binding.action == "close_search", (
+            f"Expected 'escape' to trigger 'close_search', got '{binding.action}'."
+        )
+
+
+class TestSearchFilter:
+    """_apply_search_filter should match each space-separated term against the title."""
+
+    def _make_app(self):
+        app = PendingSessionsApp()
+        app._search_query = ""
+        return app
+
+    def test_empty_query_returns_all(self):
+        app = self._make_app()
+        sessions = [
+            _make_session("s1", "proj"),
+            _make_session("s2", "proj"),
+        ]
+        assert len(app._apply_search_filter(sessions)) == 2
+
+    def test_single_term_matches(self):
+        app = self._make_app()
+        app._search_query = "eval"
+        s1 = _make_session("s1", "proj")
+        s1.title = "eval-skills"
+        s2 = _make_session("s2", "proj")
+        s2.title = "other-chat"
+        result = app._apply_search_filter([s1, s2])
+        assert len(result) == 1
+        assert result[0].title == "eval-skills"
+
+    def test_multiple_terms_all_must_match(self):
+        app = self._make_app()
+        app._search_query = "eval skills"
+        s1 = _make_session("s1", "proj")
+        s1.title = "eval-skills"
+        s2 = _make_session("s2", "proj")
+        s2.title = "eval-other"
+        result = app._apply_search_filter([s1, s2])
+        assert len(result) == 1
+        assert result[0].title == "eval-skills"
+
+    def test_case_insensitive(self):
+        app = self._make_app()
+        app._search_query = "EVAL"
+        s1 = _make_session("s1", "proj")
+        s1.title = "eval-skills"
+        result = app._apply_search_filter([s1])
+        assert len(result) == 1
+
+    def test_no_match_returns_empty(self):
+        app = self._make_app()
+        app._search_query = "nonexistent"
+        s1 = _make_session("s1", "proj")
+        s1.title = "eval-skills"
+        result = app._apply_search_filter([s1])
+        assert len(result) == 0
+
+
 class TestSessionListItemGroupedRendering:
     """SessionListItem should omit the project name when rendered in grouped mode."""
 

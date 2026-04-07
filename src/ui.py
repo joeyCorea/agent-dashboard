@@ -247,9 +247,11 @@ class PendingSessionsApp(App):
         Binding("j", "move_down", "Down", show=False),
         Binding("k", "move_up", "Up", show=False),
         Binding("enter", "open_session", "Open", show=False, priority=True),
+        Binding("escape", "close_search", "Close search", show=False),
         Binding("space", "toggle_preview", "Preview", show=True),
         Binding("o", "open_session", "Open", show=True),
         Binding("d", "dismiss_current", "Dismiss", show=True),
+        Binding("slash", "open_search", "Search", show=True),
         Binding("f", "open_filter", "Filter", show=True),
         Binding("g", "toggle_group", "Group", show=True),
         Binding("r", "refresh", "Refresh", show=True),
@@ -269,6 +271,17 @@ class PendingSessionsApp(App):
     }
 
     #filter-input.visible {
+        display: block;
+    }
+
+    #search-input {
+        dock: top;
+        display: none;
+        height: 3;
+        border: solid $accent;
+    }
+
+    #search-input.visible {
         display: block;
     }
 
@@ -310,6 +323,7 @@ class PendingSessionsApp(App):
         yield Header()
 
         with Vertical(id="main-container"):
+            yield Input(placeholder="Search by title:", id="search-input")
             yield Input(placeholder="Days to filter (0 = all):", id="filter-input")
             yield SessionListView(id="session-list")
             yield PreviewPane(id="preview-pane")
@@ -324,6 +338,7 @@ class PendingSessionsApp(App):
         """Initialize the app on mount."""
         self._days_filter = self._initial_days
         self._grouped = True
+        self._search_query = ""
         self.title = "Claude Code Pending Sessions"
         self.sub_title = filter_subtitle(self._days_filter)
         self._load_sessions()
@@ -344,9 +359,24 @@ class PendingSessionsApp(App):
 
     def _update_session_list(self, sessions: list[Session]):
         """Update the UI with loaded sessions (called on the main thread)."""
+        filtered = self._apply_search_filter(sessions)
         list_view = self.query_one("#session-list", SessionListView)
-        list_view.update_sessions(sessions, grouped=self._grouped)
+        list_view.update_sessions(filtered, grouped=self._grouped)
         list_view.focus()
+
+    def _apply_search_filter(self, sessions: list[Session]) -> list[Session]:
+        """Filter sessions by title using the current search query.
+
+        Each whitespace-separated term must appear somewhere in the title
+        (case-insensitive). All terms must match for a session to be included.
+        """
+        if not self._search_query:
+            return sessions
+        terms = self._search_query.lower().split()
+        return [
+            s for s in sessions
+            if all(term in s.title.lower() for term in terms)
+        ]
 
     def refresh_sessions(self):
         """Refresh the session list from disk."""
@@ -364,10 +394,29 @@ class PendingSessionsApp(App):
         filter_input.value = str(self._days_filter)
         filter_input.focus()
 
+    def action_open_search(self):
+        """Show the search input widget."""
+        search_input = self.query_one("#search-input", Input)
+        search_input.add_class("visible")
+        search_input.value = self._search_query
+        search_input.focus()
+
+    def action_close_search(self):
+        """Close the search input and clear the search query."""
+        search_input = self.query_one("#search-input", Input)
+        if search_input.has_class("visible"):
+            search_input.remove_class("visible")
+            search_input.value = ""
+            self._search_query = ""
+            self.query_one("#session-list", SessionListView).focus()
+            self.refresh_sessions()
+
     def on_input_submitted(self, event: Input.Submitted):
-        """Handle filter input submission (backup path if priority binding doesn't fire)."""
+        """Handle input submission for filter and search."""
         if event.input.id == "filter-input":
             self._submit_filter(event.input)
+        elif event.input.id == "search-input":
+            self._submit_search(event.input)
 
     def action_move_up(self):
         """Move up in the list."""
@@ -419,6 +468,11 @@ class PendingSessionsApp(App):
         from the Input widget — so we detect that case and delegate.
         """
         try:
+            search_input = self.query_one("#search-input", Input)
+            if search_input.has_class("visible"):
+                self._submit_search(search_input)
+                return
+
             filter_input = self.query_one("#filter-input", Input)
             if filter_input.has_class("visible"):
                 self._submit_filter(filter_input)
@@ -442,6 +496,13 @@ class PendingSessionsApp(App):
         filter_input.value = ""
         self.query_one("#session-list", SessionListView).focus()
         self.sub_title = filter_subtitle(self._days_filter)
+        self.refresh_sessions()
+
+    def _submit_search(self, search_input: Input):
+        """Process search input submission and hide the widget."""
+        self._search_query = search_input.value.strip()
+        search_input.remove_class("visible")
+        self.query_one("#session-list", SessionListView).focus()
         self.refresh_sessions()
 
     def action_dismiss_current(self):
