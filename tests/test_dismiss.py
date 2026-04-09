@@ -8,7 +8,7 @@ sessions are excluded from the TUI.
 import json
 from pathlib import Path
 
-from src.dismiss import read_dismissed_ids, dismiss_session
+from src.dismiss import read_dismissed_ids, dismiss_session, restore_session
 from src.parser import discover_sessions
 
 
@@ -67,6 +67,58 @@ class TestReadDismissedIds:
 
 
 # ---------------------------------------------------------------------------
+# Tests — restore_session removes IDs from the dismissal log
+# ---------------------------------------------------------------------------
+
+class TestRestoreSession:
+    """restore_session() must remove the given session ID from session.log."""
+
+    def test_restore_removes_id_from_log(self, tmp_path, monkeypatch):
+        """After restoring, the session ID must no longer appear in dismissed set."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".claude").mkdir(parents=True)
+
+        dismiss_session("uuid-to-restore")
+        assert "uuid-to-restore" in read_dismissed_ids()
+
+        restore_session("uuid-to-restore")
+        assert "uuid-to-restore" not in read_dismissed_ids(), (
+            "restore_session() did not remove the ID from the dismissal log."
+        )
+
+    def test_restore_preserves_other_ids(self, tmp_path, monkeypatch):
+        """Restoring one session must not remove other dismissed sessions."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".claude").mkdir(parents=True)
+
+        dismiss_session("keep-dismissed")
+        dismiss_session("to-restore")
+        dismiss_session("also-keep")
+
+        restore_session("to-restore")
+        remaining = read_dismissed_ids()
+        assert "keep-dismissed" in remaining
+        assert "also-keep" in remaining
+        assert "to-restore" not in remaining
+
+    def test_restore_nonexistent_id_is_noop(self, tmp_path, monkeypatch):
+        """Restoring an ID that isn't in the log should not error or corrupt the file."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".claude").mkdir(parents=True)
+
+        dismiss_session("existing-id")
+        restore_session("nonexistent-id")
+        assert "existing-id" in read_dismissed_ids()
+
+    def test_restore_when_no_log_file_is_noop(self, tmp_path, monkeypatch):
+        """Restoring when no session.log exists should not error."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".claude").mkdir(parents=True)
+        # No session.log created — should not raise
+        restore_session("any-id")
+
+
+# ---------------------------------------------------------------------------
 # Tests — end-to-end: hook-dismissed session excluded from TUI list
 # ---------------------------------------------------------------------------
 
@@ -97,6 +149,33 @@ class TestHookDismissedSessionFiltering:
         assert not any(s.session_id == session_id for s in active_sessions), (
             f"Session {session_id!r} still appears in active sessions despite "
             f"being listed in session.log. dismissed_ids={dismissed_ids}"
+        )
+
+    def test_restored_session_reappears(self, tmp_path, monkeypatch):
+        """A session that was dismissed and then restored must appear in the active list."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        session_id = "406c34e6-ff81-4c80-9841-19069e476f0b"
+        proj_dir = tmp_path / ".claude" / "projects" / "my-project"
+        proj_dir.mkdir(parents=True)
+        _write_real_session(session_id, proj_dir)
+
+        # Dismiss the session
+        dismiss_session(session_id)
+        dismissed = read_dismissed_ids()
+        assert session_id in dismissed
+
+        # Restore it
+        restore_session(session_id)
+
+        all_sessions = discover_sessions()
+        dismissed_ids = read_dismissed_ids()
+        active_sessions = [
+            s for s in all_sessions if s.session_id not in dismissed_ids
+        ]
+
+        assert any(s.session_id == session_id for s in active_sessions), (
+            f"Session {session_id!r} should reappear after being restored."
         )
 
     def test_non_dismissed_session_still_appears(self, tmp_path, monkeypatch):

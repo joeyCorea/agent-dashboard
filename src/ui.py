@@ -18,7 +18,7 @@ from textual import work
 from rich.markup import escape
 
 from src.parser import Session, discover_sessions, format_elapsed_time, load_message_history, _extract_text_from_content
-from src.dismiss import read_dismissed_ids, dismiss_session
+from src.dismiss import read_dismissed_ids, dismiss_session, restore_session
 
 DEFAULT_DAYS_FILTER = 7
 
@@ -53,6 +53,12 @@ def filter_sessions(sessions: list[Session], days_filter: int = DEFAULT_DAYS_FIL
         result = [s for s in result if is_within_cutoff(s, cutoff)]
 
     return result
+
+
+def filter_dismissed_sessions(sessions: list[Session]) -> list[Session]:
+    """Return only dismissed sessions (the inverse of the normal filter)."""
+    dismissed_ids = read_dismissed_ids()
+    return [s for s in sessions if s.session_id in dismissed_ids]
 
 
 def group_sessions(sessions: list[Session]) -> list[tuple[str, Any]]:
@@ -145,13 +151,13 @@ class SessionListView(ListView):
         super().__init__(**kwargs)
         self.sessions = sessions or []
 
-    def update_sessions(self, sessions: list[Session], grouped: bool = False):
+    def update_sessions(self, sessions: list[Session], grouped: bool = False, empty_message: str = "All caught up."):
         """Update the list with new sessions."""
         self.sessions = sessions
         self.clear()
 
         if not sessions:
-            self.append(ListItem(Static("All caught up.")))
+            self.append(ListItem(Static(empty_message)))
             return
 
         if not grouped:
@@ -251,6 +257,7 @@ class PendingSessionsApp(App):
         Binding("space", "toggle_preview", "Preview", show=True),
         Binding("o", "open_session", "Open", show=True),
         Binding("d", "dismiss_current", "Dismiss", show=True),
+        Binding("D", "toggle_dismissed", "Dismissed", show=True),
         Binding("slash", "open_search", "Search", show=True),
         Binding("f", "open_filter", "Filter", show=True),
         Binding("g", "toggle_group", "Group", show=True),
@@ -339,6 +346,7 @@ class PendingSessionsApp(App):
         self._days_filter = self._initial_days
         self._grouped = True
         self._search_query = ""
+        self._show_dismissed = False
         self.title = "Claude Code Pending Sessions"
         self.sub_title = filter_subtitle(self._days_filter)
         self._load_sessions()
@@ -348,8 +356,11 @@ class PendingSessionsApp(App):
         """Load sessions in a background thread for non-blocking startup."""
         self.call_from_thread(self._show_loading)
         all_sessions = discover_sessions()
-        active_sessions = filter_sessions(all_sessions, self._days_filter)
-        self.call_from_thread(self._update_session_list, active_sessions)
+        if self._show_dismissed:
+            visible_sessions = filter_dismissed_sessions(all_sessions)
+        else:
+            visible_sessions = filter_sessions(all_sessions, self._days_filter)
+        self.call_from_thread(self._update_session_list, visible_sessions)
 
     def _show_loading(self):
         """Show a loading indicator in the session list."""
@@ -361,7 +372,8 @@ class PendingSessionsApp(App):
         """Update the UI with loaded sessions (called on the main thread)."""
         filtered = self._apply_search_filter(sessions)
         list_view = self.query_one("#session-list", SessionListView)
-        list_view.update_sessions(filtered, grouped=self._grouped)
+        empty_msg = "No dismissed sessions." if self._show_dismissed else "All caught up."
+        list_view.update_sessions(filtered, grouped=self._grouped, empty_message=empty_msg)
         list_view.focus()
 
     def _apply_search_filter(self, sessions: list[Session]) -> list[Session]:
@@ -505,16 +517,28 @@ class PendingSessionsApp(App):
         self.query_one("#session-list", SessionListView).focus()
         self.refresh_sessions()
 
+    def action_toggle_dismissed(self):
+        """Toggle between active and dismissed sessions view."""
+        self._show_dismissed = not self._show_dismissed
+        if self._show_dismissed:
+            self.sub_title = "Dismissed sessions"
+        else:
+            self.sub_title = filter_subtitle(self._days_filter)
+        self.refresh_sessions()
+
     def action_dismiss_current(self):
-        """Dismiss the selected session."""
+        """Dismiss or restore the selected session depending on the current view."""
         try:
             list_view = self.query_one("#session-list", SessionListView)
             session = list_view.get_selected_session()
             if session:
-                dismiss_session(session.session_id)
+                if self._show_dismissed:
+                    restore_session(session.session_id)
+                else:
+                    dismiss_session(session.session_id)
                 self.refresh_sessions()
         except Exception as e:
-            print("Error dismissing session: {}".format(e))
+            print("Error dismissing/restoring session: {}".format(e))
 
     def action_refresh(self):
         """Manually refresh the session list."""

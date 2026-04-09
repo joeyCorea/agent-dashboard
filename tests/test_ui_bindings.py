@@ -264,6 +264,54 @@ class TestGroupSessions:
         )
 
 
+class TestDismissedViewBinding:
+    """The 'D' key binding must exist and trigger the dismissed view toggle."""
+
+    def _get_binding(self, key: str):
+        for binding in PendingSessionsApp.BINDINGS:
+            if binding.key == key:
+                return binding
+        return None
+
+    def test_D_binding_exists(self):
+        """The 'D' key must be bound to action_toggle_dismissed."""
+        binding = self._get_binding("D")
+        assert binding is not None, "No 'D' binding found in PendingSessionsApp.BINDINGS."
+        assert binding.action == "toggle_dismissed", (
+            f"Expected 'D' to trigger 'toggle_dismissed', got '{binding.action}'."
+        )
+
+
+class TestDismissedViewMode:
+    """The dismissed view shows only dismissed sessions and 'd' restores them."""
+
+    def test_show_dismissed_defaults_false(self):
+        """_show_dismissed must default to False in on_mount."""
+        import inspect
+        source = inspect.getsource(PendingSessionsApp.on_mount)
+        assert "_show_dismissed = False" in source, (
+            "on_mount must set _show_dismissed = False."
+        )
+
+    def test_filter_dismissed_sessions_returns_only_dismissed(self, tmp_path, monkeypatch):
+        """filter_dismissed_sessions should return only sessions whose IDs are in the log."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".claude").mkdir(parents=True)
+
+        from src.dismiss import dismiss_session
+        dismiss_session("dismissed-1")
+
+        from src.ui import filter_dismissed_sessions
+        sessions = [
+            _make_session("dismissed-1", "proj"),
+            _make_session("active-1", "proj"),
+        ]
+        result = filter_dismissed_sessions(sessions)
+        ids = [s.session_id for s in result]
+        assert "dismissed-1" in ids, "Dismissed session should appear in dismissed view."
+        assert "active-1" not in ids, "Active session should not appear in dismissed view."
+
+
 class TestSearchBinding:
     """The '/' key binding must exist and trigger the search action."""
 

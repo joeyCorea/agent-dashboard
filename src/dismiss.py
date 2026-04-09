@@ -54,3 +54,27 @@ def dismiss_session(session_id: str) -> None:
             f.write(f"{session_id}\n")
     except Exception as e:
         print(f"Error: Failed to dismiss session: {e}")
+
+
+def restore_session(session_id: str) -> None:
+    """
+    Remove a session ID from the dismissal log, restoring it to the active list.
+
+    Args:
+        session_id: The session ID to restore
+    """
+    log_path = _get_dismissal_log_path()
+
+    if not log_path.exists():
+        return
+
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        remaining = [line for line in lines if line.strip() != session_id]
+
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.writelines(remaining)
+    except Exception as e:
+        print(f"Error: Failed to restore session: {e}")
